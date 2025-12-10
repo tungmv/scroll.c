@@ -2,7 +2,7 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <stdio.h>
 
-// Create event tap options
+// Function to create event tap
 static CFMachPortRef create_event_tap(void);
 static CGEventRef event_callback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *refcon);
 
@@ -53,6 +53,11 @@ int main(void) {
     
     // Create run loop source and add to current run loop
     CFRunLoopSourceRef run_loop_source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, event_tap, 0);
+    if (!run_loop_source) {
+        fprintf(stderr, "Failed to create run loop source.\n");
+        CFRelease(event_tap);
+        return 1;
+    }
     CFRunLoopAddSource(CFRunLoopGetCurrent(), run_loop_source, kCFRunLoopCommonModes);
     
     // Enable the event tap

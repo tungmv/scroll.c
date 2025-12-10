@@ -10,6 +10,6 @@ clang -std=c17 -Wall -Wextra -Werror -pedantic -O3 -march=native -mtune=native -
 **Requirements**: Accessibility permissions (System Preferences → Security & Privacy → Privacy → Accessibility)
 
 ## Configuration
-Default: Inverts vertical scroll, keeps horizontal normal. Modify `create_options()` to customize.
+Default: Inverts vertical scroll, keeps horizontal normal. Modify `create_event_tap()` to customize.
 
 Automatically inverts mouse scroll direction. Use with tmux for background operation.
