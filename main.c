@@ -1,158 +1,78 @@
 #include <ApplicationServices/ApplicationServices.h>
+#include <CoreFoundation/CoreFoundation.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <stdbool.h>
-#include <signal.h>
 
-// MARK: - Configuration Options
-typedef struct {
-    bool invertVerticalScroll;
-    bool disableScrollAccel;
-    int64_t scrollLines;
-    bool alternateDetectionMethod;
-} Options;
+// Function to create event tap
+static CFMachPortRef create_event_tap(void);
+static CGEventRef event_callback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *refcon);
 
-static Options* create_options(
-    bool invertVerticalScroll,
-    bool disableScrollAccel,
-    int scrollLines,
-    bool alternateDetectionMethod
-) {
-    Options *options = malloc(sizeof(Options));
-    if (!options) {
-        fprintf(stderr, "Failed to allocate memory for options\n");
-        exit(1);
+// Event callback function that intercepts scroll events
+static CGEventRef event_callback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *refcon) {
+    (void)proxy;
+    (void)refcon;
+    
+    if (type == kCGEventScrollWheel) {
+        // Get scroll deltas
+        int64_t delta_y = CGEventGetIntegerValueField(event, kCGScrollWheelEventDeltaAxis1);
+        
+        // Invert vertical scroll direction
+        CGEventSetIntegerValueField(event, kCGScrollWheelEventDeltaAxis1, -delta_y);
     }
-
-    options->invertVerticalScroll = invertVerticalScroll;
-    options->disableScrollAccel = disableScrollAccel;
-    options->scrollLines = (int64_t)scrollLines;
-    options->alternateDetectionMethod = alternateDetectionMethod;
-    return options;
-}
-
-static Options* get_shared_options(void) {
-    static Options *sharedOptions = NULL;
-    if (sharedOptions == NULL) {
-        sharedOptions = create_options(true, false, 3, false);
-    }
-    return sharedOptions;
-}
-
-// MARK: - Scroll Interceptor
-// Cache field constants to avoid repeated lookups (equivalent to Swift's static lets)
-static const CGEventField kIsContinuousField = kCGScrollWheelEventIsContinuous;
-static const CGEventField kMomentumPhaseField = kCGScrollWheelEventMomentumPhase;
-static const CGEventField kScrollCountField = kCGScrollWheelEventScrollCount;
-static const CGEventField kScrollPhaseField = kCGScrollWheelEventScrollPhase;
-static const CGEventField kDeltaAxis1Field = kCGScrollWheelEventDeltaAxis1;
-// static const CGEventField kDeltaAxis2Field = kCGScrollWheelEventDeltaAxis2;
-
-// Global reference for cleanup
-static CFMachPortRef g_eventTap = NULL;
-static CFRunLoopSourceRef g_runLoopSource = NULL;
-
-// Inline function equivalent to Swift's @inline(__always)
-static inline bool is_wheel_event(CGEventRef event, const Options *options) {
-    if (!options->alternateDetectionMethod) {
-        return CGEventGetIntegerValueField(event, kIsContinuousField) == 0;
-    } else {
-        return (CGEventGetIntegerValueField(event, kMomentumPhaseField) == 0 &&
-                CGEventGetDoubleValueField(event, kScrollCountField) == 0.0 &&
-                CGEventGetDoubleValueField(event, kScrollPhaseField) == 0.0);
-    }
-}
-
-// Inline function equivalent to Swift's @inline(__always)
-static inline void process_scroll_event(CGEventRef event, const Options *options) {
-    if (options->invertVerticalScroll) {
-        int64_t value = CGEventGetIntegerValueField(event, kDeltaAxis1Field);
-        CGEventSetIntegerValueField(event, kDeltaAxis1Field, -value);
-    }
-
-    if (options->disableScrollAccel) {
-        int64_t currentValue = CGEventGetIntegerValueField(event, kDeltaAxis1Field);
-        int64_t sign = (currentValue > 0) ? 1 : (currentValue < 0) ? -1 : 0;
-        CGEventSetIntegerValueField(event, kDeltaAxis1Field, sign * options->scrollLines);
-    }
-}
-
-static CGEventRef scroll_event_callback(CGEventTapProxy proxy __attribute__((unused)), CGEventType type __attribute__((unused)), CGEventRef event, void *userInfo __attribute__((unused))) {
-    const Options *options = get_shared_options();
-    bool isWheel = is_wheel_event(event, options);
-
-    if (isWheel) {
-        process_scroll_event(event, options);
-    }
-
-    // Return the event to continue processing (equivalent to Swift's Unmanaged.passUnretained(event))
+    
     return event;
 }
 
-static void cleanup_resources(void) {
-    if (g_eventTap) {
-        CGEventTapEnable(g_eventTap, false);
-        CFRelease(g_eventTap);
-        g_eventTap = NULL;
-    }
-
-    if (g_runLoopSource) {
-        CFRunLoopRemoveSource(CFRunLoopGetCurrent(), g_runLoopSource, kCFRunLoopCommonModes);
-        CFRelease(g_runLoopSource);
-        g_runLoopSource = NULL;
-    }
-}
-
-static void signal_handler(int sig) {
-    printf("\nReceived signal %d, cleaning up...\n", sig);
-    cleanup_resources();
-    exit(0);
-}
-
-static void setup_signal_handlers(void) {
-    signal(SIGINT, signal_handler);
-    signal(SIGTERM, signal_handler);
-}
-
-void intercept_scroll(void) {
-    setup_signal_handlers();
-
-    // Create event tap with same parameters as Swift version
-    CGEventMask eventMask = CGEventMaskBit(kCGEventScrollWheel);
-    g_eventTap = CGEventTapCreate(
-        kCGHIDEventTap,                // .cghidEventTap
-        kCGTailAppendEventTap,         // .tailAppendEventTap
-        kCGEventTapOptionDefault,       // .defaultTap
-        eventMask,
-        scroll_event_callback,
+// Create and configure the event tap
+static CFMachPortRef create_event_tap(void) {
+    CGEventMask event_mask = (1 << kCGEventScrollWheel);
+    
+    CFMachPortRef event_tap = CGEventTapCreate(
+        kCGSessionEventTap,
+        kCGHeadInsertEventTap,
+        kCGEventTapOptionDefault,
+        event_mask,
+        event_callback,
         NULL
     );
-
-    if (!g_eventTap) {
-        fprintf(stderr, "Failed to create event tap. Ensure the app has Accessibility permissions.\n");
-        exit(1);
+    
+    if (!event_tap) {
+        fprintf(stderr, "Failed to create event tap. Please check Accessibility permissions.\n");
+        fprintf(stderr, "System Preferences → Security & Privacy → Privacy → Accessibility\n");
+        return NULL;
     }
-
-    g_runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, g_eventTap, 0);
-    if (!g_runLoopSource) {
-        fprintf(stderr, "Failed to create run loop source.\n");
-        CFRelease(g_eventTap);
-        exit(1);
-    }
-
-    CFRunLoopAddSource(CFRunLoopGetCurrent(), g_runLoopSource, kCFRunLoopCommonModes);
-    CGEventTapEnable(g_eventTap, true);
-
-    printf("Scroll interceptor running. Press Ctrl+C to stop.\n");
-    CFRunLoopRun();
+    
+    return event_tap;
 }
 
-// MARK: - Main Execution
-int main(int argc __attribute__((unused)), const char * argv[] __attribute__((unused))) {
-    // Start the scroll interceptor (equivalent to Swift's ScrollInterceptor.shared.interceptScroll())
-    intercept_scroll();
-
-    // Clean up on exit
-    cleanup_resources();
+int main(void) {
+    // Create the event tap
+    CFMachPortRef event_tap = create_event_tap();
+    if (!event_tap) {
+        return 1;
+    }
+    
+    // Create run loop source and add to current run loop
+    CFRunLoopSourceRef run_loop_source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, event_tap, 0);
+    if (!run_loop_source) {
+        fprintf(stderr, "Failed to create run loop source.\n");
+        CFRelease(event_tap);
+        return 1;
+    }
+    CFRunLoopAddSource(CFRunLoopGetCurrent(), run_loop_source, kCFRunLoopCommonModes);
+    
+    // Enable the event tap
+    CGEventTapEnable(event_tap, true);
+    
+    printf("Scroll interceptor started. Press Ctrl+C to quit.\n");
+    printf("Vertical scroll is now inverted.\n");
+    
+    // Run the event loop
+    CFRunLoopRun();
+    
+    // Cleanup (this code will only run if the run loop exits)
+    CFRunLoopRemoveSource(CFRunLoopGetCurrent(), run_loop_source, kCFRunLoopCommonModes);
+    CFRelease(run_loop_source);
+    CFRelease(event_tap);
+    
     return 0;
 }
