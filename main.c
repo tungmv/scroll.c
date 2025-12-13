@@ -10,22 +10,27 @@ static CGEventRef event_callback(CGEventTapProxy proxy, CGEventType type, CGEven
 static CGEventRef event_callback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *refcon) {
     (void)proxy;
     (void)refcon;
-    
+
     if (type == kCGEventScrollWheel) {
-        // Get scroll deltas
-        int64_t delta_y = CGEventGetIntegerValueField(event, kCGScrollWheelEventDeltaAxis1);
-        
-        // Invert vertical scroll direction
-        CGEventSetIntegerValueField(event, kCGScrollWheelEventDeltaAxis1, -delta_y);
+        // Check if the event comes from a mouse (not trackpad)
+        // Trackpad events typically have momentum and different characteristics
+        int64_t is_continuous = CGEventGetIntegerValueField(event, kCGScrollWheelEventIsContinuous);
+
+        if (!is_continuous) {
+            // Get scroll deltas
+            int64_t delta_y = CGEventGetIntegerValueField(event, kCGScrollWheelEventDeltaAxis1);
+
+            // Invert vertical scroll direction
+            CGEventSetIntegerValueField(event, kCGScrollWheelEventDeltaAxis1, -delta_y);
+        }
     }
-    
     return event;
 }
 
 // Create and configure the event tap
 static CFMachPortRef create_event_tap(void) {
     CGEventMask event_mask = (1 << kCGEventScrollWheel);
-    
+
     CFMachPortRef event_tap = CGEventTapCreate(
         kCGSessionEventTap,
         kCGHeadInsertEventTap,
@@ -34,13 +39,13 @@ static CFMachPortRef create_event_tap(void) {
         event_callback,
         NULL
     );
-    
+
     if (!event_tap) {
         fprintf(stderr, "Failed to create event tap. Please check Accessibility permissions.\n");
         fprintf(stderr, "System Preferences → Security & Privacy → Privacy → Accessibility\n");
         return NULL;
     }
-    
+
     return event_tap;
 }
 
@@ -50,7 +55,7 @@ int main(void) {
     if (!event_tap) {
         return 1;
     }
-    
+
     // Create run loop source and add to current run loop
     CFRunLoopSourceRef run_loop_source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, event_tap, 0);
     if (!run_loop_source) {
@@ -59,20 +64,20 @@ int main(void) {
         return 1;
     }
     CFRunLoopAddSource(CFRunLoopGetCurrent(), run_loop_source, kCFRunLoopCommonModes);
-    
+
     // Enable the event tap
     CGEventTapEnable(event_tap, true);
-    
+
     printf("Scroll interceptor started. Press Ctrl+C to quit.\n");
     printf("Vertical scroll is now inverted.\n");
-    
+
     // Run the event loop
     CFRunLoopRun();
-    
+
     // Cleanup (this code will only run if the run loop exits)
     CFRunLoopRemoveSource(CFRunLoopGetCurrent(), run_loop_source, kCFRunLoopCommonModes);
     CFRelease(run_loop_source);
     CFRelease(event_tap);
-    
+
     return 0;
 }
